@@ -15,3 +15,6 @@ There are textbox entries for the user to provide information for the following:
 
 #### Additional Features
 There's an image and caption/tag statistics tab, for evaluating as a (post-processing step) all the results from the model
+
+## Run Instructions
+> python gpt-vlm-run.py

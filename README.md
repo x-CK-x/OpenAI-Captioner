@@ -2,7 +2,7 @@
 Uses GPT models from OpenAI to caption image data in single &amp; batch configurations.
 
 ### 3 important steps
-1. make an openai account in order to setup an api key (side note: openai will mandate that the user sets up a CC with their own respective account to manage the billing for their api access/usage)
+1. make an openai account in order to setup an api key (**side note**: openai will mandate that the user sets up a CC with their own respective account to manage the billing for their api access/usage)
 2. clone the repo
 3. pip install -r requirements.txt
 

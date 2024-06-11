@@ -1,0 +1,9 @@
+openai
+requests
+Pillow
+gradio
+pandas
+matplotlib
+numpy
+scikit-image
+scikit-learn

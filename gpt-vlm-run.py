@@ -20,6 +20,7 @@ SUPPORTED_FORMATS = {'png', 'jpeg', 'gif', 'webp'}
 MAX_TOTAL_SIZE_MB = 20
 MAX_SIZE_BYTES = MAX_TOTAL_SIZE_MB * 1024 * 1024
 PRESETS_FILE = "presets.json"
+OUTPUT_PATH_PRESETS_FILE = "output_path_presets.json"
 
 # Token limits for different models
 TOKEN_LIMITS = {
@@ -45,15 +46,15 @@ def save_api_key(api_key):
         json.dump({"api_key": api_key}, file)
 
 # Load presets from file if available
-def load_presets():
-    if os.path.exists(PRESETS_FILE):
-        with open(PRESETS_FILE, 'r') as file:
+def load_presets(file_path):
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as file:
             return json.load(file)
     return []
 
 # Save presets to file
-def save_presets(presets):
-    with open(PRESETS_FILE, 'w') as file:
+def save_presets(presets, file_path):
+    with open(file_path, 'w') as file:
         json.dump(presets, file, indent=4)
 
 def is_supported_format(image_format):
@@ -84,8 +85,8 @@ def check_total_size(images):
 def process_images(images, max_image_dimension):
     base64_images = []
     image_filenames = []
-    for image in images:
-        img = Image.open(image)
+    for image_path in images:
+        img = Image.open(image_path)
 
         if not is_supported_format(img.format):
             raise ValueError(f"Unsupported image format: {img.format}. Supported formats are: {SUPPORTED_FORMATS}.")
@@ -97,7 +98,7 @@ def process_images(images, max_image_dimension):
         base64_images.append(base64_image)
 
         # Extract the image filename without extension for saving captions
-        filename = os.path.basename(image).split('.')[0]
+        filename = os.path.basename(image_path).split('.')[0]
         image_filenames.append(filename)
 
     check_total_size(base64_images)
@@ -123,15 +124,24 @@ def generate_image_captions(api_key, model, images, prompt, max_image_dimension,
             "messages": [
                 {
                     "role": "user",
-                    "content": prompt
-                },
-                {
-                    "role": "user",
-                    "content": f"data:image/jpeg;base64,{img_str}"
+                    "content": [
+                        {
+                        "type": "text",
+                        "text": prompt
+                        },
+                        {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{img_str}"
+                        }
+                        }
+                    ]
                 }
             ],
             "max_tokens": max_tokens
         }
+
+        # print(f"Generating caption for image: {img_str}")
 
         response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
         response_json = response.json()  # Parse the response JSON
@@ -172,6 +182,7 @@ def save_caption_to_file(caption, filename, output_path):
     output_file_path = os.path.join(output_path, f"{filename}.txt")
     with open(output_file_path, 'w') as file:
         file.write(caption)
+    print(f"Caption saved to: {output_file_path}")
 
 def noise_level(image):
     """Calculate the noise level of the image."""
@@ -291,7 +302,8 @@ def analyze_directory(directory_path):
     return df_images, df_words, df_img_similarity, df_caption_similarity
 
 # Load existing presets
-presets = load_presets()
+presets = load_presets(PRESETS_FILE)
+output_path_presets = load_presets(OUTPUT_PATH_PRESETS_FILE)
 
 # Gradio Interface
 def single_image_mode(api_key, model, image, prompt, output_path, max_image_dimension):
@@ -323,19 +335,36 @@ def batch_image_mode(api_key, model, images, prompt, output_path, max_image_dime
 
 def add_preset(preset_name, prompt):
     presets.append({"name": preset_name, "prompt": prompt})
-    save_presets(presets)
+    save_presets(presets, PRESETS_FILE)
     return gr.update(choices=[preset["name"] for preset in presets])
 
 def delete_preset(preset_name):
     global presets
     presets = [preset for preset in presets if preset["name"] != preset_name]
-    save_presets(presets)
+    save_presets(presets, PRESETS_FILE)
     return gr.update(choices=[preset["name"] for preset in presets])
 
 def load_preset(preset_name):
     for preset in presets:
-        if (preset["name"]) == preset_name:
+        if preset["name"] == preset_name:
             return preset["prompt"]
+    return ""
+
+def add_output_path_preset(preset_name, output_path):
+    output_path_presets.append({"name": preset_name, "output_path": output_path})
+    save_presets(output_path_presets, OUTPUT_PATH_PRESETS_FILE)
+    return gr.update(choices=[preset["name"] for preset in output_path_presets])
+
+def delete_output_path_preset(preset_name):
+    global output_path_presets
+    output_path_presets = [preset for preset in output_path_presets if preset["name"] != preset_name]
+    save_presets(output_path_presets, OUTPUT_PATH_PRESETS_FILE)
+    return gr.update(choices=[preset["name"] for preset in output_path_presets])
+
+def load_output_path_preset(preset_name):
+    for preset in output_path_presets:
+        if preset["name"] == preset_name:
+            return preset["output_path"]
     return ""
 
 def analyze_stats(directory_path):
@@ -366,10 +395,17 @@ with gr.Blocks() as demo:
 
     api_key_input = gr.Textbox(label="API Key", value=load_api_key(), type="password")
     save_api_key_button = gr.Button("Save API Key", variant="primary")
-    model_selection = gr.Dropdown(label="Model", choices=["gpt-4o", "gpt-4o-2024-05-13", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"], value="gpt-4-turbo")
+    model_selection = gr.Dropdown(label="Model", choices=["gpt-4o", "gpt-4o-2024-05-13", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"], value="gpt-4o")
     prompt_input = gr.Textbox(label="Prompt", lines=2)
     output_path_input = gr.Textbox(label="Output Path")
     max_image_dimension_slider = gr.Slider(label="Max Image Dimension", minimum=128, maximum=1024, step=64, value=512)
+
+    output_path_preset_name_input = gr.Textbox(label="Output Path Preset Name")
+    output_path_presets_dropdown = gr.Dropdown(label="Output Path Presets", choices=[preset["name"] for preset in output_path_presets])
+    with gr.Row():
+        load_output_path_preset_button = gr.Button("Load Output Path Preset", variant="primary")
+        delete_output_path_preset_button = gr.Button("Delete Output Path Preset", variant="primary")
+        add_output_path_preset_button = gr.Button("Add Output Path Preset", variant="primary")
 
     with gr.Tabs():
         with gr.TabItem("Single Image Mode"):
@@ -411,5 +447,8 @@ with gr.Blocks() as demo:
         load_preset_button.click(load_preset, presets_dropdown, prompt_input)
 
     save_api_key_button.click(save_api_key, inputs=[api_key_input], outputs=[])
+    add_output_path_preset_button.click(add_output_path_preset, [output_path_preset_name_input, output_path_input], output_path_presets_dropdown)
+    delete_output_path_preset_button.click(delete_output_path_preset, output_path_presets_dropdown, output_path_presets_dropdown)
+    load_output_path_preset_button.click(load_output_path_preset, output_path_presets_dropdown, output_path_input)
 
-demo.launch()#share=True
+demo.launch()

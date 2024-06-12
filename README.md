@@ -27,3 +27,9 @@ There's an image and caption/tag statistics tab, for evaluating as a (post-proce
 
 #### Stats Tab
 ![2](https://github.com/x-CK-x/OpenAI-Captioner/assets/48079849/64cafef1-52dd-4a8a-8d7e-f5047a95d002)
+
+#### Troubleshooting
+
+- if the response from the api call contains something along the lines of: "Sorry image could not be described", then the image is likely to in some way be in violation of OpenAI's T.O.S.
+- if the response eludes to a image incompatibility; could be the result of the selected model being deprecated and only raw image urls would be supported (versus the current image string conversion)
+- if other errors occur, see: [https://platform.openai.com/docs/guides/error-codes/api-errors.](https://platform.openai.com/docs/guides/error-codes/api-errors.)

@@ -24,13 +24,16 @@ There are textbox entries for the user to provide information for the following:
 > python gpt-vlm-run.py
 
 #### Main Menu
-![0](https://github.com/x-CK-x/OpenAI-Captioner/assets/48079849/cf0d1710-7e4c-4794-a969-0a78a6d7f421)
+![0](https://github.com/x-CK-x/OpenAI-Captioner/assets/48079849/2d6c80a9-119e-4582-a803-38f52a5531ee)
+
 
 #### Batch Mode Configuration Tab
-![1](https://github.com/x-CK-x/OpenAI-Captioner/assets/48079849/e859a3b9-e6e9-4325-b389-2dd637f2265d)
+![1](https://github.com/x-CK-x/OpenAI-Captioner/assets/48079849/1834b23a-a69d-4322-bd86-048da6a6915a)
+
 
 #### Stats Tab
-![2](https://github.com/x-CK-x/OpenAI-Captioner/assets/48079849/64cafef1-52dd-4a8a-8d7e-f5047a95d002)
+![2](https://github.com/x-CK-x/OpenAI-Captioner/assets/48079849/957bfcc3-0e2f-4fb1-ac4b-e7031783abd3)
+
 
 #### Troubleshooting
 

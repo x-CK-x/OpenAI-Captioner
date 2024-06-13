@@ -16,7 +16,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 API_KEY_FILE = "api_key.json"
 
-SUPPORTED_FORMATS = {'png', 'jpeg', 'gif', 'webp'}
+SUPPORTED_FORMATS = {'png', 'jpeg', 'jpg', 'gif', 'webp', 'bmp', 'tiff', 'svg', 'ico', 'jfif', 'mpo', 'jpe'}
 MAX_TOTAL_SIZE_MB = 20
 MAX_SIZE_BYTES = MAX_TOTAL_SIZE_MB * 1024 * 1024
 PRESETS_FILE = "presets.json"
@@ -31,6 +31,11 @@ TOKEN_LIMITS = {
     "gpt-4o": {"TPM": 30000, "RPM": 500, "TPD": 90000},
     "gpt-4o-2024-05-13": {"TPM": 30000, "RPM": 500, "TPD": 90000}
 }
+
+FAILED_GENERATION_WORDS = ["error", "fail", "exception", "invalid", "unknown", 
+                           "unrecognized", "unsupported", "unavailable", 
+                           "unsuccessful", "failure", "incorrect", 
+                           "incomplete", "sorry", "cannot", "can't", "unable"]
 
 # Load API key from file if available
 def load_api_key():
@@ -98,7 +103,7 @@ def process_images(images, max_image_dimension):
         base64_images.append(base64_image)
 
         # Extract the image filename without extension for saving captions
-        filename = os.path.basename(image_path).split('.')[0]
+        filename = os.path.basename(image_path)
         image_filenames.append(filename)
 
     check_total_size(base64_images)
@@ -141,8 +146,6 @@ def generate_image_captions(api_key, model, images, prompt, max_image_dimension,
             "max_tokens": max_tokens
         }
 
-        # print(f"Generating caption for image: {img_str}")
-
         response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
         response_json = response.json()  # Parse the response JSON
 
@@ -156,6 +159,23 @@ def generate_image_captions(api_key, model, images, prompt, max_image_dimension,
         print(response_json)
     return captions, image_filenames
 
+def contains_failed_generation(caption):
+    return any(word in caption.lower() for word in FAILED_GENERATION_WORDS)
+
+def save_caption_to_file(caption, filename, output_path):
+    if not contains_failed_generation(caption):
+        for ext in SUPPORTED_FORMATS:
+            if ext in filename:
+                filename = filename.replace(f".{ext}", "")
+                break
+
+        output_file_path = os.path.join(output_path, f"{filename}.txt")
+        with open(output_file_path, 'w') as file:
+            file.write(caption)
+        print(f"Caption saved to: {output_file_path}")
+    else:
+        print(f"Failed to generate caption for: {filename}")
+
 def batch_generate_captions(api_key, model, images, prompt, output_path, max_image_dimension, folder_path=None):
     if folder_path:
         images = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.split('.')[-1].lower() in SUPPORTED_FORMATS]
@@ -164,25 +184,47 @@ def batch_generate_captions(api_key, model, images, prompt, output_path, max_ima
     max_tokens_per_minute = token_limit["TPM"]
     max_tokens_per_request = min(token_limit["TPM"], 300)  # 300 is a default example limit
 
-    # Split images into smaller batches to stay within token limit
-    batch_size = max(1, max_tokens_per_minute // max_tokens_per_request)
+    # Process images in batches of 20
+    batch_size = 20
     batches = [images[i:i + batch_size] for i in range(0, len(images), batch_size)]
     all_captions = []
+    failed_images = []
 
     for batch in batches:
         captions, filenames = generate_image_captions(api_key, model, batch, prompt, max_image_dimension, max_tokens=max_tokens_per_request)
-        all_captions.extend(zip(captions, filenames))
+        for caption, filename, image_path in zip(captions, filenames, batch):
+            if not contains_failed_generation(caption):
+                save_caption_to_file(caption, filename, output_path)
+                all_captions.append((caption, filename))
+            else:
+                failed_images.append(image_path)
 
-    for caption, filename in all_captions:
-        save_caption_to_file(caption, filename, output_path)
+    print(f"Failed images: {failed_images}")
+    return all_captions, failed_images
 
-    return "Captions saved automatically for all images."
+def add_to_queue(new_images, queue):
+    if queue is None:
+        queue = []
+    if new_images:
+        new_image_paths = [image.name for image in new_images]
+        queue.extend(new_image_paths)
+        print(f"Added {len(new_image_paths)} images to queue. Queue length: {len(queue)}")
+    return queue
 
-def save_caption_to_file(caption, filename, output_path):
-    output_file_path = os.path.join(output_path, f"{filename}.txt")
-    with open(output_file_path, 'w') as file:
-        file.write(caption)
-    print(f"Caption saved to: {output_file_path}")
+def process_queue(api_key, model, queue, prompt, output_path, max_image_dimension):
+    all_captions = []
+    failed_images = []
+
+    while queue:
+        batch = queue[:20]
+        queue = queue[20:]
+        print(f"Processing batch of {len(batch)} images. Remaining queue length: {len(queue)}")
+        captions, failed_batch = batch_generate_captions(api_key, model, batch, prompt, output_path, max_image_dimension)
+        all_captions.extend(captions)
+        failed_images.extend(failed_batch)
+
+    print(f"Processing Queue Completed. Failed images: {failed_images}")
+    return all_captions, failed_images, queue
 
 def noise_level(image):
     """Calculate the noise level of the image."""
@@ -306,32 +348,19 @@ presets = load_presets(PRESETS_FILE)
 output_path_presets = load_presets(OUTPUT_PATH_PRESETS_FILE)
 
 # Gradio Interface
+queue = []
+
 def single_image_mode(api_key, model, image, prompt, output_path, max_image_dimension):
     captions, filenames = generate_image_captions(api_key, model, [image], prompt, max_image_dimension)
     save_caption_to_file(captions[0], filenames[0], output_path)
     return captions[0]
 
 def batch_image_mode(api_key, model, images, prompt, output_path, max_image_dimension, folder_path=None):
-    if folder_path:
-        images = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.split('.')[-1].lower() in SUPPORTED_FORMATS]
-
-    token_limit = get_token_limit(model)
-    max_tokens_per_minute = token_limit["TPM"]
-    max_tokens_per_request = min(token_limit["TPM"], 300)  # 300 is a default example limit
-
-    # Split images into smaller batches to stay within token limit
-    batch_size = max(1, max_tokens_per_minute // max_tokens_per_request)
-    batches = [images[i:i + batch_size] for i in range(0, len(images), batch_size)]
-    all_captions = []
-
-    for batch in batches:
-        captions, filenames = generate_image_captions(api_key, model, batch, prompt, max_image_dimension, max_tokens=max_tokens_per_request)
-        all_captions.extend(zip(captions, filenames))
-
-    for caption, filename in all_captions:
-        save_caption_to_file(caption, filename, output_path)
-
-    return "Captions saved automatically for all images."
+    new_images = images if not folder_path else [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.split('.')[-1].lower() in SUPPORTED_FORMATS]
+    global queue
+    queue = add_to_queue(new_images, queue)
+    captions, failed_images, queue = process_queue(api_key, model, queue, prompt, output_path, max_image_dimension)
+    return f"Captions saved automatically for all images. Failed images: {failed_images}", failed_images
 
 def add_preset(preset_name, prompt):
     presets.append({"name": preset_name, "prompt": prompt})
@@ -396,59 +425,71 @@ with gr.Blocks() as demo:
     api_key_input = gr.Textbox(label="API Key", value=load_api_key(), type="password")
     save_api_key_button = gr.Button("Save API Key", variant="primary")
     model_selection = gr.Dropdown(label="Model", choices=["gpt-4o", "gpt-4o-2024-05-13", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"], value="gpt-4o")
+    max_image_dimension_slider = gr.Slider(label="Max Image Dimension", minimum=128, maximum=1024, step=64, value=512)
     prompt_input = gr.Textbox(label="Prompt", lines=2)
     output_path_input = gr.Textbox(label="Output Path")
-    max_image_dimension_slider = gr.Slider(label="Max Image Dimension", minimum=128, maximum=1024, step=64, value=512)
+    
+    with gr.Accordion("Presets", open=True):
+        with gr.Column():
+            with gr.Row():
+                preset_name_input = gr.Textbox(label="Preset Name")
+                output_path_preset_name_input = gr.Textbox(label="Output Path Preset Name")
+            with gr.Row():
+                presets_dropdown = gr.Dropdown(label="Presets", choices=[preset["name"] for preset in presets])
+                output_path_presets_dropdown = gr.Dropdown(label="Output Path Presets", choices=[preset["name"] for preset in output_path_presets])
 
-    output_path_preset_name_input = gr.Textbox(label="Output Path Preset Name")
-    output_path_presets_dropdown = gr.Dropdown(label="Output Path Presets", choices=[preset["name"] for preset in output_path_presets])
-    with gr.Row():
-        load_output_path_preset_button = gr.Button("Load Output Path Preset", variant="primary")
-        delete_output_path_preset_button = gr.Button("Delete Output Path Preset", variant="primary")
-        add_output_path_preset_button = gr.Button("Add Output Path Preset", variant="primary")
+        with gr.Row():
+            with gr.Column():
+                load_preset_button = gr.Button("Load Prompt Preset", variant="primary")
+                load_output_path_preset_button = gr.Button("Load Output Path Preset", variant="primary")
+            with gr.Column():
+                delete_preset_button = gr.Button("Delete Prompt Preset", variant="primary")
+                delete_output_path_preset_button = gr.Button("Delete Output Path Preset", variant="primary")
+            with gr.Column():
+                add_preset_button = gr.Button("Add Prompt Preset", variant="primary")
+                add_output_path_preset_button = gr.Button("Add Output Path Preset", variant="primary")
+
+        add_preset_button.click(add_preset, [preset_name_input, prompt_input], presets_dropdown)
+        delete_preset_button.click(delete_preset, presets_dropdown, presets_dropdown)
+        load_preset_button.click(load_preset, presets_dropdown, prompt_input)
+        add_output_path_preset_button.click(add_output_path_preset, [output_path_preset_name_input, output_path_input], output_path_presets_dropdown)
+        delete_output_path_preset_button.click(delete_output_path_preset, output_path_presets_dropdown, output_path_presets_dropdown)
+        load_output_path_preset_button.click(load_output_path_preset, output_path_presets_dropdown, output_path_input)
 
     with gr.Tabs():
         with gr.TabItem("Single Image Mode"):
-            image_input = gr.Image(type="filepath", label="Upload Image")
             single_image_output = gr.Textbox(label="Generated Caption")
             with gr.Row():
                 save_single_image_button = gr.Button("Save Caption", variant="primary")
                 single_image_button = gr.Button("Generate Caption", variant="primary")
+
+            image_input = gr.Image(type="filepath", label="Upload Image")
             single_image_button.click(single_image_mode, [api_key_input, model_selection, image_input, prompt_input, output_path_input, max_image_dimension_slider], single_image_output)
             save_single_image_button.click(save_caption_to_file, [single_image_output, image_input, output_path_input], outputs=[])
 
         with gr.TabItem("Batch Image Mode"):
-            images_input = gr.Files(type="filepath", label="Upload Images", file_count="multiple")
             folder_path_input = gr.Textbox(label="Folder Path (optional)")
             batch_image_output = gr.Textbox(label="Status")
             batch_image_button = gr.Button("Generate Captions", variant="primary")
-            batch_image_button.click(batch_image_mode, [api_key_input, model_selection, images_input, prompt_input, output_path_input, max_image_dimension_slider, folder_path_input], batch_image_output)
+
+            images_input = gr.Files(type="filepath", label="Upload Images", file_count="multiple")
+
+            add_to_queue_button = gr.Button("Add to Queue", variant="primary")
+            additional_images_input = gr.Files(type="filepath", label="Upload Additional Images", file_count="multiple")
+            
+            add_to_queue_button.click(add_to_queue, [additional_images_input, gr.State(queue)], queue)
+            batch_image_button.click(batch_image_mode, [api_key_input, model_selection, images_input, prompt_input, output_path_input, max_image_dimension_slider, folder_path_input], [batch_image_output, images_input])
 
         with gr.TabItem("Statistics"):
             directory_input = gr.Textbox(label="Directory Path")
             stats_button = gr.Button("Generate Stats", variant="primary")
+            
             image_stats_output = gr.Dataframe(label="Image Stats")
             word_stats_output = gr.Dataframe(label="Word Stats")
             img_similarity_output = gr.Dataframe(label="Image Similarity")
             caption_similarity_output = gr.Dataframe(label="Caption Similarity")
             stats_button.click(analyze_stats, directory_input, [image_stats_output, word_stats_output, img_similarity_output, caption_similarity_output])
 
-    with gr.Accordion("Presets", open=True):
-        with gr.Column():
-            preset_name_input = gr.Textbox(label="Preset Name")
-            presets_dropdown = gr.Dropdown(label="Presets", choices=[preset["name"] for preset in presets])
-            with gr.Row():
-                load_preset_button = gr.Button("Load Preset", variant="primary")
-                delete_preset_button = gr.Button("Delete Preset", variant="primary")
-                add_preset_button = gr.Button("Add Preset", variant="primary")
-
-        add_preset_button.click(add_preset, [preset_name_input, prompt_input], presets_dropdown)
-        delete_preset_button.click(delete_preset, presets_dropdown, presets_dropdown)
-        load_preset_button.click(load_preset, presets_dropdown, prompt_input)
-
     save_api_key_button.click(save_api_key, inputs=[api_key_input], outputs=[])
-    add_output_path_preset_button.click(add_output_path_preset, [output_path_preset_name_input, output_path_input], output_path_presets_dropdown)
-    delete_output_path_preset_button.click(delete_output_path_preset, output_path_presets_dropdown, output_path_presets_dropdown)
-    load_output_path_preset_button.click(load_output_path_preset, output_path_presets_dropdown, output_path_input)
 
 demo.launch()

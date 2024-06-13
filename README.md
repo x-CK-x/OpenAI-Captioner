@@ -14,7 +14,11 @@ There are textbox entries for the user to provide information for the following:
 - preset configuration name : for preset dropdown list
 
 #### Additional Features
-There's an image and caption/tag statistics tab, for evaluating as a (post-processing step) all the results from the model
+- image and caption/tag statistics tab, for evaluating as a (post-processing step) all the results from the model
+- preset options for the prompt & output path
+- new queue system to let the user provide as many images as they want to avoid the 20 image limit with the api calls
+- images that might not return captions can temporarily stay on the image upload component, to quickly test other GPT vlm models available to see if those provide captions instead
+- a second image upload component was added to let the user add images to the live queue as they deem necessary
 
 ## Run Instructions
 > python gpt-vlm-run.py
